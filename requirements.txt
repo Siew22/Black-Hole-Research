@@ -1,0 +1,39 @@
+# --- 核心深度学习与机器学习库 ---
+# TensorFlow 包含了 Keras，所以不需要再单独安装 keras。
+tensorflow==2.19.0
+# Keras Tuner 是一个独立的包，用于超参数搜索，需要保留。
+keras-tuner==1.4.7
+
+# --- 数据科学与可视化 ---
+numpy==1.26.4
+pandas==2.2.2
+scikit-learn==1.4.2
+scikit-image==0.23.2
+scipy==1.13.0
+seaborn==0.13.2
+matplotlib==3.8.4
+Pillow==10.3.0 # 从 'from PIL import Image' 推断出需要此库
+
+# --- 可解释性 AI (XAI) ---
+shap==0.45.0
+tf-explain==0.3.1
+
+# --- 自然语言处理 (NLP) ---
+# transformers 会自动安装一个CPU版的torch。
+transformers==4.39.3
+sentencepiece
+accelerate
+
+# --- 3D 可视化 ---
+pyvista==0.43.7
+# PyVista 需要一个图形界面后端来显示交互式窗口。
+PyQt5
+
+# --- 工具与实验跟踪 ---
+tqdm==4.66.4
+joblib==1.4.2
+wandb==0.20.1
+tf-keras==2.19.0
+tensorboard==2.19.0
+ml-dtypes==0.5.1
+opencv-python==4.11.0.86

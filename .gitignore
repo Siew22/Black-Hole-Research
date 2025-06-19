@@ -1,0 +1,37 @@
+# Python
+/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 虚拟环境
+# 如果你的环境文件夹叫 env
+/env/
+# 如果叫 .venv
+/.venv/
+# 其他可能的名称
+/venv/
+/ENV/
+
+# Keras Tuner 目录
+/keras_tuner_dir/
+
+# Weights & Biases 本地目录
+/wandb/
+
+# 数据文件 (通常不把大型数据集上传到 Git)
+/data/
+
+# 模型文件 (这些文件通常很大)
+/models/
+
+# 结果文件 (这些是代码运行后生成的，不需要版本控制)
+/results/
+
+# IDE 和编辑器配置
+/.vscode/
+/.idea/
+
+# 操作系统文件
+/.DS_Store
+/Thumbs.db
