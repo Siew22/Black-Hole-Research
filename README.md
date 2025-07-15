@@ -123,12 +123,8 @@ Grad-CAM analysis: intuitively shows that the model focuses on the most physical
 | :---: | :---: |
 |
 ![alt text](https://place-holder-for-your-image-url.com/shap.png)
-<img width="989" height="940" alt="shap_summary_classification_bar" src="https://github.com/user-attachments/assets/1748ab99-b0ff-47cd-be76-e4daab7ee567" />
-
 |
 ![alt text](https://place-holder-for-your-image-url.com/grad_cam.png)
-<img width="800" height="800" alt="grad_cam_example" src="https://github.com/user-attachments/assets/dd958465-d549-4270-ac50-ed4510bfc16a" />
-
 |
 3. Generative Model
 Our multimodal GAN ​​successfully learned the data distribution and can generate new data samples with physical consistency, demonstrating its great potential as a data augmentation tool.
