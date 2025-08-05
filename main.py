@@ -9,6 +9,8 @@ from sklearn.preprocessing import StandardScaler, MinMaxScaler
 import wandb
 import random # For seeding
 import matplotlib.pyplot as plt
+from sklearn.utils import class_weight
+from keras.optimizers import Adam
 
 # Keras 3.x 推荐的后端和配置导入方式
 from tensorflow import keras
@@ -27,7 +29,7 @@ from src.ml_experiment import run_ml_experiment
 from src.cnn_image_extractor import run_cnn_image_extractor
 from src.timeseries_extractor import run_timeseries_extractor
 from src.volumetric_extractor import run_volumetric_extractor
-from src.multimodal_fusion_system import MultimodalFusionSystem, build_tabular_feature_extractor
+from src.multimodal_fusion_system import MultimodalFusionSystem, build_tabular_feature_extractor, build_flat_fusion_model, create_weighted_categorical_crossentropy, custom_gaussian_nll_loss_stacked
 from src.nlp_experiment import run_nlp_experiment
 from src.xai_analysis import run_xai_analysis
 from src.generative_model_demo import (
@@ -484,6 +486,100 @@ def main():
         )
     else:
         print("Skipping XAI analysis as fusion model is not available.")
+    
+    # --- NEW: STAGE 5.2: BASELINE FLAT FUSION MODEL TRAINING & EVALUATION ---
+    print("\n--- Baseline Flat Fusion Model Stage ---")
+    
+    # We will reuse the data and splits from the main experiment for a fair comparison
+    # First, let's re-create the data splits to ensure they are available
+    print("Preparing data for baseline model...")
+    img_feats, tab_feats, gw_feats, xray_feats, vol_feats = multimodal_system._extract_features(
+        X_images_initial, X_tabular_initial, X_gw_initial, X_xray_initial, X_volumetric_initial
+    )
+    y_reg_to_scale = y_regression_initial.copy().reshape(-1, 1)
+    if multimodal_system.use_log_transform_regression:
+        y_reg_to_scale = np.log1p(np.maximum(0, y_reg_to_scale))
+    y_regression_initial_scaled = multimodal_system.scaler_regression_target.transform(y_reg_to_scale)
+
+    (X_img_train, X_img_test, X_tab_train, X_tab_test, X_gw_train, X_gw_test, X_xray_train, X_xray_test, 
+     X_vol_train, X_vol_test, y_train_cls_labels, y_test_cls_labels, 
+     y_train_reg_scaled, y_test_reg_scaled) = train_test_split(
+        img_feats, tab_feats, gw_feats, xray_feats, vol_feats, y_labels_initial, y_regression_initial_scaled,
+        test_size=0.2, random_state=GlobalConfig.RANDOM_SEED, stratify=y_labels_initial
+    )
+
+    y_train_cls_cat = keras.utils.to_categorical(y_train_cls_labels, num_classes=num_classes_initial)
+    y_test_cls_cat = keras.utils.to_categorical(y_test_cls_labels, num_classes=num_classes_initial)
+    
+    train_inputs_dict = {'image_features_input_flat': X_img_train, 'tabular_features_input_flat': X_tab_train,
+                         'gw_features_input_flat': X_gw_train, 'xray_features_input_flat': X_xray_train,
+                         'volumetric_features_input_flat': X_vol_train}
+    val_inputs_dict = {'image_features_input_flat': X_img_test, 'tabular_features_input_flat': X_tab_test,
+                       'gw_features_input_flat': X_gw_test, 'xray_features_input_flat': X_xray_test,
+                       'volumetric_features_input_flat': X_vol_test}
+
+    train_outputs_dict = {'classification_output': y_train_cls_cat, 'regression_output': y_train_reg_scaled}
+    val_outputs_dict = {'classification_output': y_test_cls_cat, 'regression_output': y_test_reg_scaled}
+
+    with strategy.scope():
+        print("Building and compiling Flat Fusion baseline model...")
+        flat_model = build_flat_fusion_model(
+            img_feats.shape[1], tab_feats.shape[1], gw_feats.shape[1],
+            xray_feats.shape[1], vol_feats.shape[1], num_classes_initial
+        )
+        # Use a reasonable learning rate and the same weighted loss
+        class_weights = class_weight.compute_class_weight('balanced', classes=np.unique(y_train_cls_labels), y=y_train_cls_labels)
+        class_weights_dict = {i: w for i, w in enumerate(class_weights)}
+        weighted_loss = create_weighted_categorical_crossentropy(class_weights_dict)
+        
+        flat_model.compile(
+            optimizer=Adam(learning_rate=1e-4),
+            loss={'classification_output': weighted_loss, 'regression_output': custom_gaussian_nll_loss_stacked},
+            loss_weights={'classification_output': 1.0, 'regression_output': 0.05}
+        )
+    
+    print("Training Flat Fusion baseline model...")
+    flat_model.fit(
+        train_inputs_dict, train_outputs_dict,
+        epochs=GlobalConfig.INITIAL_TRAINING_EPOCHS,
+        batch_size=GlobalConfig.INITIAL_TRAINING_BATCH_SIZE,
+        validation_data=(val_inputs_dict, val_outputs_dict),
+        callbacks=[keras.callbacks.EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)],
+        verbose=1
+    )
+
+    print("\n--- Evaluating Flat Fusion Baseline ---")
+    # Evaluate on the full test set (created in STAGE 6)
+    # Note: Ensure STAGE 6 code runs before this, or redefine test sets here. For simplicity, we redefine.
+    _, test_indices = train_test_split(np.arange(X_images_initial.shape[0]), test_size=0.15, random_state=GlobalConfig.RANDOM_SEED, stratify=y_labels_initial)
+    
+    img_feats_test, tab_feats_test, gw_feats_test, xray_feats_test, vol_feats_test = multimodal_system._extract_features(
+        X_images_initial[test_indices], X_tabular_initial[test_indices], X_gw_initial[test_indices],
+        X_xray_initial[test_indices], X_volumetric_initial[test_indices]
+    )
+    
+    # 1. Full Test Set Evaluation
+    print("\n--- on Full Test Set ---")
+    flat_preds_full = flat_model.predict([img_feats_test, tab_feats_test, gw_feats_test, xray_feats_test, vol_feats_test])
+    flat_pred_cls_full = np.argmax(flat_preds_full[0], axis=1)
+    flat_accuracy_full = accuracy_score(y_labels_initial[test_indices], flat_pred_cls_full)
+    print(f"Flat Fusion Accuracy (Full Test Set): {flat_accuracy_full:.4f}")
+
+    # 2. Degraded Test Set Evaluation
+    print("\n--- on Degraded Test Set (50% X-ray loss) ---")
+    xray_feats_degraded = xray_feats_test.copy()
+    num_to_degrade = len(xray_feats_degraded) // 2
+    degrade_indices = np.random.choice(len(xray_feats_degraded), num_to_degrade, replace=False)
+    xray_feats_degraded[degrade_indices] = 0
+    
+    flat_preds_degraded = flat_model.predict([img_feats_test, tab_feats_test, gw_feats_test, xray_feats_degraded, vol_feats_test])
+    flat_pred_cls_degraded = np.argmax(flat_preds_degraded[0], axis=1)
+    flat_accuracy_degraded = accuracy_score(y_labels_initial[test_indices], flat_pred_cls_degraded)
+    print(f"Flat Fusion Accuracy (Degraded Test Set): {flat_accuracy_degraded:.4f}")
+
+    if wandb_other_exp_run:
+        wandb_other_exp_run.summary["baseline_accuracy_full"] = flat_accuracy_full
+        wandb_other_exp_run.summary["baseline_accuracy_degraded"] = flat_accuracy_degraded
     
     # *** NEW: STAGE 6: FINAL MODEL EVALUATION ***
     print("\n--- Final Model Evaluation Stage ---")
