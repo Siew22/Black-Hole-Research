@@ -117,6 +117,55 @@ def build_multimodal_fusion_model_probabilistic_uq(image_feature_dim, tabular_fe
     )
     return model
 
+# --- Baseline: Flat Fusion Model ---
+def build_flat_fusion_model(image_feature_dim, tabular_feature_dim, gw_feature_dim, xray_feature_dim, volumetric_feature_dim, num_classes, l2_reg=1e-4):
+    """
+    Builds a standard "Flat Fusion" model for baseline comparison.
+    All features are concatenated directly into a single attention layer.
+    """
+    # 5 independent feature inputs
+    image_input = Input(shape=(image_feature_dim,), name='image_features_input_flat')
+    tabular_input = Input(shape=(tabular_feature_dim,), name='tabular_features_input_flat')
+    gw_input = Input(shape=(gw_feature_dim,), name='gw_features_input_flat')
+    xray_input = Input(shape=(xray_feature_dim,), name='xray_features_input_flat')
+    volumetric_input = Input(shape=(volumetric_feature_dim,), name='volumetric_features_input_flat')
+
+    # --- Step 1: Direct Concatenation (The "Flat" part) ---
+    final_fusion_input = concatenate([
+        image_input, tabular_input, gw_input, xray_input, volumetric_input
+    ], name='flat_fusion_concat')
+
+    # --- The rest of the architecture is IDENTICAL to the HFM for a fair comparison ---
+    attention_dense_units = int(final_fusion_input.shape[-1] * 0.5); attention_dense_units = max(1, attention_dense_units)
+    attention_scores = Dense(attention_dense_units, activation='relu', name='flat_attention_relu', kernel_regularizer=regularizers.l2(l2_reg))(final_fusion_input)
+    attention_scores = Dense(final_fusion_input.shape[-1], activation='sigmoid', name='flat_attention_weights')(attention_scores)
+    fused_features_attn = keras.layers.multiply([final_fusion_input, attention_scores], name='flat_fused_features_with_attention')
+
+    x_shared = Dense(512, activation='relu', kernel_regularizer=regularizers.l2(l2_reg))(fused_features_attn)
+    x_shared = BatchNormalization()(x_shared)
+    x_shared = Dropout(0.5)(x_shared)
+    x_shared = Dense(256, activation='relu', kernel_regularizer=regularizers.l2(l2_reg))(x_shared)
+    x_shared = BatchNormalization()(x_shared)
+    x_shared_output = Dropout(0.4)(x_shared)
+
+    classification_output_tensor = Dense(num_classes, activation='softmax', name='classification_output', dtype='float32')(x_shared_output)
+    
+    regression_branch = Dense(128, activation='relu', kernel_regularizer=regularizers.l2(l2_reg))(x_shared_output)
+    regression_branch = BatchNormalization()(regression_branch)
+    regression_branch = Dropout(0.3)(regression_branch)
+    regression_branch = Dense(64, activation='relu', kernel_regularizer=regularizers.l2(l2_reg))(regression_branch)
+    regression_branch = BatchNormalization()(regression_branch)
+    regression_params_hidden = Dropout(0.3)(regression_branch)
+    params_for_regression = Dense(2, activation=None, name='params_for_regression_tensor', dtype='float32')(regression_params_hidden)
+    regression_output_tensor = CustomProbabilisticRegression(name='regression_output')(params_for_regression)
+    
+    model = Model(
+        inputs=[image_input, tabular_input, gw_input, xray_input, volumetric_input], 
+        outputs=[classification_output_tensor, regression_output_tensor], 
+        name='flat_multimodal_regressor_baseline'
+    )
+    return model
+
 class MultimodalFusionSystem:
     def __init__(self, num_classes, fusion_model_path=None,
                  image_extractor_path=None, tabular_feature_extractor_model=None,
